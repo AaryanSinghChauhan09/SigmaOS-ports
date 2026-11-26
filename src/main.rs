@@ -84,23 +84,21 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 println!("{c}");
             }
         }
-        Commands::List { category } => {
-            match category {
-                Some(cat) => {
-                    if !db.categories.contains(&cat) {
-                        return Err(format!("unknown category: {cat}").into());
-                    }
-                    for p in db.in_category(&cat) {
-                        println!("{} {} ({:?})", p.name, p.version, p.state);
-                    }
+        Commands::List { category } => match category {
+            Some(cat) => {
+                if !db.categories.contains(&cat) {
+                    return Err(format!("unknown category: {cat}").into());
                 }
-                None => {
-                    for p in db.ports.values() {
-                        println!("{} {} {} ({:?})", p.category, p.name, p.version, p.state);
-                    }
+                for p in db.in_category(&cat) {
+                    println!("{} {} ({:?})", p.name, p.version, p.state);
                 }
             }
-        }
+            None => {
+                for p in db.ports.values() {
+                    println!("{} {} {} ({:?})", p.category, p.name, p.version, p.state);
+                }
+            }
+        },
         Commands::Search { query } => {
             for p in db.search(&query) {
                 println!("{} {} — {}", p.name, p.version, p.description);
