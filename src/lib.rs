@@ -181,3 +181,91 @@ pub fn default_db_path() -> Option<PathBuf> {
     directories::ProjectDirs::from("org", "sigmaos", "sigmaos")
         .map(|p| p.data_dir().join("ports").join("db.json"))
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn port(name: &str, cat: &str, deps: &[&str]) -> Port {
+        Port {
+            name: name.into(),
+            category: cat.into(),
+            version: "1.0".into(),
+            description: format!("{} port", name),
+            depends: deps.iter().map(|s| s.to_string()).collect(),
+            license: String::new(),
+            state: PortState::Available,
+            maintainer: String::new(),
+        }
+    }
+
+    #[test]
+    fn add_get_and_categories() {
+        let mut db = PortsDb::default();
+        db.add(port("bash", "shells", &[])).unwrap();
+        db.add(port("git", "vcs", &[])).unwrap();
+        assert!(db.get("bash").is_some());
+        assert!(db.get("nope").is_none());
+        assert_eq!(db.in_category("shells").len(), 1);
+        assert_eq!(db.list_categories().len(), 2);
+        assert!(matches!(
+            db.add(port("", "x", &[])),
+            Err(PortsError::Validation(_))
+        ));
+    }
+
+    #[test]
+    fn build_plan_orders_dependencies() {
+        let mut db = PortsDb::default();
+        db.add(port("a", "c", &[])).unwrap();
+        db.add(port("b", "c", &["a"])).unwrap();
+        db.add(port("c", "c", &["b"])).unwrap();
+        let plan = db.build_plan("c").unwrap();
+        assert_eq!(plan, vec!["a", "b", "c"]);
+    }
+
+    #[test]
+    fn build_plan_detects_cycle_and_missing() {
+        let mut db = PortsDb::default();
+        db.add(port("x", "c", &["y"])).unwrap();
+        db.add(port("y", "c", &["x"])).unwrap();
+        assert!(matches!(db.build_plan("x"), Err(PortsError::Cycle(_))));
+        assert!(matches!(
+            db.build_plan("ghost"),
+            Err(PortsError::NotFound(_))
+        ));
+    }
+
+    #[test]
+    fn state_and_search() {
+        let mut db = PortsDb::default();
+        db.add(port("firefox", "net", &[])).unwrap();
+        db.add(port("git", "vcs", &[])).unwrap();
+        db.set_state("git", PortState::Installed).unwrap();
+        assert!(matches!(
+            db.set_state("ghost", PortState::Building),
+            Err(PortsError::NotFound(_))
+        ));
+        assert_eq!(db.by_state(PortState::Installed).len(), 1);
+        assert_eq!(db.by_state(PortState::Available).len(), 1);
+        assert_eq!(db.search("FIRE").len(), 1);
+        assert_eq!(db.search("port").len(), 2);
+        assert!(db.search("zzz").is_empty());
+    }
+
+    #[test]
+    fn save_load_roundtrip() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("nested/db.json");
+        let mut db = PortsDb::default();
+        db.add(port("vim", "editors", &["ncurses"])).unwrap();
+        db.add(port("ncurses", "libs", &[])).unwrap();
+        db.set_state("vim", PortState::Building).unwrap();
+        db.save(&path).unwrap();
+        let loaded = PortsDb::load(&path).unwrap();
+        assert_eq!(loaded.ports.len(), 2);
+        assert_eq!(loaded.get("vim").unwrap().state, PortState::Building);
+        assert_eq!(loaded.build_plan("vim").unwrap(), vec!["ncurses", "vim"]);
+        assert!(PortsDb::load(&dir.path().join("missing.json")).is_err());
+    }
+}
